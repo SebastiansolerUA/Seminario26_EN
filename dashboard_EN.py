@@ -29,9 +29,9 @@ with st.sidebar:
     **Required columns:**
     - Language (Português, English, Español)
     - Category
-    - Web chatbot response
-    - AI4Life chatbot response
-    - Manual search response (ground truth)
+    - Web chatbot response (numeric)
+    - AI4Life chatbot response (numeric)
+    - Manual search response (numeric - ground truth)
     """)
 
 # Process when file is uploaded
@@ -39,21 +39,53 @@ if uploaded_file:
     # Load data
     df = pd.read_excel(uploaded_file)
     
-    # Auto-detect columns
-    col_web = [c for c in df.columns if 'web.ua.pt' in c.lower() or 'extraida' in c.lower() or 'web' in c.lower()][0]
-    col_ai4 = [c for c in df.columns if 'ai4life' in c.lower()][0]
-    col_manual = [c for c in df.columns if 'manual' in c.lower()][0]
+    # Show ALL column names to debug
+    st.write("**Columnas encontradas:**", list(df.columns))
+    
+    # Try to identify numeric columns
+    # Look for columns with 'web', 'ai4', 'manual' in name
+    posibles_web = [c for c in df.columns if 'web' in c.lower() or 'extraida' in c.lower()]
+    posibles_ai4 = [c for c in df.columns if 'ai4' in c.lower() or 'ai4life' in c.lower()]
+    posibles_manual = [c for c in df.columns if 'manual' in c.lower()]
+    
+    if not posibles_web or not posibles_ai4 or not posibles_manual:
+        st.error("❌ No se encontraron las columnas necesarias")
+        st.write("Columnas disponibles:", list(df.columns))
+        st.stop()
+    
+    col_web = posibles_web[0]
+    col_ai4 = posibles_ai4[0]
+    col_manual = posibles_manual[0]
+    
+    # Convert to numeric (force conversion, errors become NaN)
+    df[col_web] = pd.to_numeric(df[col_web], errors='coerce')
+    df[col_ai4] = pd.to_numeric(df[col_ai4], errors='coerce')
+    df[col_manual] = pd.to_numeric(df[col_manual], errors='coerce')
+    
+    # Remove rows with NaN values
+    before = len(df)
+    df = df.dropna(subset=[col_web, col_ai4, col_manual])
+    after = len(df)
+    
+    if after < before:
+        st.warning(f"⚠️ {before - after} rows were removed due to non-numeric values")
+    
+    if len(df) == 0:
+        st.error("❌ No valid numeric data found. Check your Excel file.")
+        st.stop()
     
     # Calculate absolute errors
     df['Error_Web'] = abs(df[col_web] - df[col_manual])
     df['Error_AI4'] = abs(df[col_ai4] - df[col_manual])
     
     # Success message
-    st.success(f"✅ File loaded successfully: {len(df)} records")
+    st.success(f"✅ File loaded successfully: {len(df)} valid records")
     
     # ========== DATA PREVIEW ==========
     st.subheader("📋 Data Preview")
-    st.dataframe(df[['Language', 'Category', col_web, col_ai4, col_manual, 'Error_Web', 'Error_AI4']].head(10))
+    preview_cols = ['Language', 'Category', col_web, col_ai4, col_manual, 'Error_Web', 'Error_AI4']
+    preview_cols = [c for c in preview_cols if c in df.columns]
+    st.dataframe(df[preview_cols].head(10))
     
     # ========== KEY METRICS ==========
     st.subheader("📊 Key Metrics")
@@ -86,7 +118,7 @@ if uploaded_file:
     st.subheader("📊 Error Comparison")
     
     fig2, ax2 = plt.subplots(figsize=(8, 6))
-    box_data = [df['Error_Web'], df['Error_AI4']]
+    box_data = [df['Error_Web'].dropna(), df['Error_AI4'].dropna()]
     bp = ax2.boxplot(box_data, labels=['Web', 'AI4Life'], patch_artist=True)
     bp['boxes'][0].set_facecolor('#1565C0')
     bp['boxes'][1].set_facecolor('#C62828')
@@ -106,14 +138,14 @@ if uploaded_file:
         fig3, axes = plt.subplots(1, 2, figsize=(14, 5))
         
         # Web by language
-        web_data_lang = [df[df['Language'] == lang]['Error_Web'].values for lang in languages]
+        web_data_lang = [df[df['Language'] == lang]['Error_Web'].dropna().values for lang in languages]
         axes[0].boxplot(web_data_lang, labels=languages, patch_artist=True)
         axes[0].set_title('Web System - Error by Language')
         axes[0].set_ylabel('Absolute Error')
         axes[0].grid(True, alpha=0.3)
         
         # AI4 by language
-        ai4_data_lang = [df[df['Language'] == lang]['Error_AI4'].values for lang in languages]
+        ai4_data_lang = [df[df['Language'] == lang]['Error_AI4'].dropna().values for lang in languages]
         axes[1].boxplot(ai4_data_lang, labels=languages, patch_artist=True)
         axes[1].set_title('AI4Life System - Error by Language')
         axes[1].set_ylabel('Absolute Error')
@@ -137,75 +169,17 @@ if uploaded_file:
             })
         st.dataframe(pd.DataFrame(stats_lang))
     
-    # ========== ANALYSIS BY CATEGORY ==========
-    if 'Category' in df.columns:
-        st.subheader("📚 Analysis by Category")
-        
-        categories = df['Category'].unique()
-        
-        fig4, axes = plt.subplots(1, 2, figsize=(14, 5))
-        
-        # Web by category
-        web_data_cat = [df[df['Category'] == cat]['Error_Web'].values for cat in categories]
-        axes[0].boxplot(web_data_cat, labels=categories, patch_artist=True)
-        axes[0].set_title('Web System - Error by Category')
-        axes[0].set_ylabel('Absolute Error')
-        axes[0].tick_params(axis='x', rotation=45)
-        axes[0].grid(True, alpha=0.3)
-        
-        # AI4 by category
-        ai4_data_cat = [df[df['Category'] == cat]['Error_AI4'].values for cat in categories]
-        axes[1].boxplot(ai4_data_cat, labels=categories, patch_artist=True)
-        axes[1].set_title('AI4Life System - Error by Category')
-        axes[1].set_ylabel('Absolute Error')
-        axes[1].tick_params(axis='x', rotation=45)
-        axes[1].grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        st.pyplot(fig4)
-    
-    # ========== STATISTICAL TESTS ==========
-    st.subheader("🔬 Statistical Tests")
-    
-    # Mann-Whitney U test
-    U, p_mw = mannwhitneyu(df['Error_Web'], df['Error_AI4'])
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write("**Web vs AI4Life Comparison**")
-        st.write(f"- U statistic: {U:.0f}")
-        st.write(f"- p-value: {p_mw:.4f}")
-        if p_mw < 0.05:
-            st.success("✅ Significant difference between systems")
-        else:
-            st.info("❌ No significant difference")
-    
-    # Kruskal-Wallis by language
-    if 'Language' in df.columns and len(df['Language'].unique()) > 1:
-        with col2:
-            st.write("**Comparison Between Languages (Web)**")
-            groups = [df[df['Language'] == lang]['Error_Web'].values for lang in df['Language'].unique()]
-            H, p_kw = kruskal(*groups)
-            st.write(f"- H statistic: {H:.3f}")
-            st.write(f"- p-value: {p_kw:.4f}")
-            if p_kw < 0.05:
-                st.success("✅ Significant difference between languages")
-            else:
-                st.info("❌ No significant difference between languages")
-    
     # ========== SUMMARY TABLE ==========
     st.subheader("📋 Descriptive Statistics Summary")
     
     summary = pd.DataFrame({
-        'Metric': ['Mean', 'Median', 'Std Deviation', 'Minimum', 'Maximum', 'Q1 (25%)', 'Q3 (75%)', 'Exact Hits (%)'],
+        'Metric': ['Mean', 'Median', 'Std Deviation', 'Minimum', 'Maximum', 'Exact Hits (%)'],
         'Web': [
             f"{df['Error_Web'].mean():.2f}",
             f"{df['Error_Web'].median():.1f}",
             f"{df['Error_Web'].std():.2f}",
             f"{df['Error_Web'].min():.0f}",
             f"{df['Error_Web'].max():.0f}",
-            f"{df['Error_Web'].quantile(0.25):.1f}",
-            f"{df['Error_Web'].quantile(0.75):.1f}",
             f"{(df['Error_Web'] == 0).sum()/len(df)*100:.1f}%"
         ],
         'AI4Life': [
@@ -214,16 +188,10 @@ if uploaded_file:
             f"{df['Error_AI4'].std():.2f}",
             f"{df['Error_AI4'].min():.0f}",
             f"{df['Error_AI4'].max():.0f}",
-            f"{df['Error_AI4'].quantile(0.25):.1f}",
-            f"{df['Error_AI4'].quantile(0.75):.1f}",
             f"{(df['Error_AI4'] == 0).sum()/len(df)*100:.1f}%"
         ]
     })
     st.table(summary)
-    
-    # ========== FULL DATA ==========
-    with st.expander("📊 View all data (expand)"):
-        st.dataframe(df)
     
     # ========== DOWNLOAD BUTTON ==========
     csv = df.to_csv(index=False).encode('utf-8')
@@ -243,14 +211,9 @@ else:
         **Required columns:**
         - `Language` (Português, English, Español)
         - `Category` (question type)
-        - `Respuesta extraida del chatbot https://salina.web.ua.pt/` (numeric value)
-        - `Respuesta extraida del chatbot https://salina.ai4life.uk/` (numeric value)
-        - `Respuesta busqueda manual` (ground truth value)
-        
-        **Example format:**
-        | Language | Category | Web response | AI4Life response | Manual response |
-        |----------|----------|--------------|------------------|-----------------|
-        | Spanish | Book Search | 25 | 30 | 28 |
+        - Column with web responses (must be numeric)
+        - Column with AI4Life responses (must be numeric)
+        - Column with manual responses (must be numeric - ground truth)
         """)
 
 # Footer
